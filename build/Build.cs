@@ -240,9 +240,9 @@ class Build : NukeBuild
                 // /uselocaltime: align with HidHide.vcxproj Inf2CatUseLocalTime — avoids 22.9.7 postdated DriverVer on CI in non-UTC zones.
                 // Inf2Cat ships with the WDK ("wdkwhere run inf2cat"), not on PATH.
                 // ":nq" (NUKE no-quote) on the WHOLE command line preserves argv exactly, same as RunWdkWhereSigntool.
+                // NUKE tool delegates throw ProcessException on non-zero exit codes, so no extra exit-code assertion here.
                 var inf2CatArguments = $"run inf2cat /driver:\"{driverDir}\" /os:{inf2CatOs} /uselocaltime /verbose";
-                WdkWhere($"{inf2CatArguments:nq}", logInvocation: false)
-                    .AssertZeroExitCode();
+                WdkWhere($"{inf2CatArguments:nq}", logInvocation: false);
 
                 SignWithPfx(pfxPath, pfxPassword, cat, pageHash: false, timestamp: useTimestamp);
             }
