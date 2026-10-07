@@ -24,7 +24,7 @@ class Build : NukeBuild
     readonly string Configuration = IsLocalBuild ? "Debug" : "Release";
 
     [Parameter("Platform to build: x64 | ARM64. Default is current CI platform or x64 locally.")]
-    readonly string Platform = IsLocalBuild ? "x64" : (AppVeyor.Instance.Platform ?? "x64");
+    readonly string Platform = IsLocalBuild ? "x64" : (AppVeyor.Instance?.Platform ?? Environment.GetEnvironmentVariable("GH_MATRIX_PLATFORM") ?? "x64");
 
     [Parameter("Optional path to PFX for CI test-signing MSI staging driver files. If omitted or missing, a throwaway code-signing PFX is generated (see AppVeyor env HIDHIDE_TEST_SIGN_PFX).")]
     readonly string? HidHideTestSignPfx;

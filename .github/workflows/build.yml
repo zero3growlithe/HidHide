@@ -130,6 +130,7 @@ jobs:
         shell: pwsh
         env:
           APPVEYOR_BUILD_VERSION: ${{ env.BUILD_VERSION }}
+          GH_MATRIX_PLATFORM: ${{ matrix.platform }}
         run: |
           $ErrorActionPreference = 'Stop'
           powershell -ExecutionPolicy Bypass -File ".\build.ps1" Ci --configuration Release --platform ${{ matrix.platform }}
