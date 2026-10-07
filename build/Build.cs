@@ -238,11 +238,10 @@ class Build : NukeBuild
                 // Inf2Cat /driver: no trailing `\` before the closing `"` — `...\x64\"` breaks argv parsing ("Parameter format not correct").
                 var driverDir = StageDir.ToString().TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
                 // /uselocaltime: align with HidHide.vcxproj Inf2CatUseLocalTime — avoids 22.9.7 postdated DriverVer on CI in non-UTC zones.
-                ProcessTasks.StartProcess(
-                        "Inf2Cat.exe",
-                        $"/driver:\"{driverDir}\" /os:{inf2CatOs} /uselocaltime /verbose",
-                        logInvocation: false,
-                        logger: (_, s) => Logger.Normal(s))
+                // Inf2Cat ships with the WDK ("wdkwhere run inf2cat"), not on PATH.
+                // ":nq" (NUKE no-quote) on the WHOLE command line preserves argv exactly, same as RunWdkWhereSigntool.
+                var inf2CatArguments = $"run inf2cat /driver:\"{driverDir}\" /os:{inf2CatOs} /uselocaltime /verbose";
+                WdkWhere($"{inf2CatArguments:nq}", logInvocation: false)
                     .AssertZeroExitCode();
 
                 SignWithPfx(pfxPath, pfxPassword, cat, pageHash: false, timestamp: useTimestamp);
