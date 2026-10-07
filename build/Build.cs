@@ -45,6 +45,42 @@ class Build : NukeBuild
     /// </summary>
     static AbsolutePath SolutionFile => RootDirectory / "HidHide.sln";
 
+    static string? s_msBuildPath;
+
+    /// <summary>
+    /// VS MSBuild resolved via vswhere. NUKE 9's MSBuildToolPathResolver only knows VS2017–VS2022
+    /// folders; GH-hosted windows-2025 images now ship VS2026 under "Microsoft Visual Studio\18",
+    /// so the built-in resolver finds zero instances ("Could not find a suitable MSBuild instance").
+    /// </summary>
+    static string ResolvedMsBuildPath => s_msBuildPath ??= ResolveVisualStudioMsBuildPath();
+
+    static string ResolveVisualStudioMsBuildPath()
+    {
+        var vswhere = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
+            "Microsoft Visual Studio",
+            "Installer",
+            "vswhere.exe");
+
+        if (!File.Exists(vswhere))
+            throw new FileNotFoundException($"vswhere.exe not found at '{vswhere}'.");
+
+        var process = ProcessTasks.StartProcess(
+            vswhere,
+            "-latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\\**\\Bin\\amd64\\MSBuild.exe",
+            logInvocation: false,
+            logger: (_, line) => Logger.Normal(line));
+        process.AssertZeroExitCode();
+
+        var candidate = process.Output
+            .Select(x => x.Text.Trim())
+            .LastOrDefault(x => x.EndsWith("MSBuild.exe", StringComparison.OrdinalIgnoreCase));
+
+        return string.IsNullOrWhiteSpace(candidate)
+            ? throw new InvalidOperationException("vswhere found no Visual Studio instance providing MSBuild.exe.")
+            : candidate!;
+    }
+
     AbsolutePath ArtifactsDirectory => RootDirectory / "artifacts";
     AbsolutePath StagingRoot => ArtifactsDirectory / "staging";
     AbsolutePath OutputRoot => RootDirectory / "bin" / Configuration / Platform;
@@ -73,6 +109,7 @@ class Build : NukeBuild
             EnsureGoogleTestNuGetPackage();
             MSBuild(s => s
                 .SetTargetPath(SolutionFile)
+                .SetProcessToolPath(ResolvedMsBuildPath)
                 .SetTargets("Restore")
                 .SetVerbosity(MSBuildVerbosity.Minimal));
         });
@@ -85,6 +122,7 @@ class Build : NukeBuild
 
             MSBuild(s => s
                 .SetTargetPath(SolutionFile)
+                .SetProcessToolPath(ResolvedMsBuildPath)
                 .SetTargets("Rebuild")
                 .SetConfiguration(Configuration)
                 .SetTargetPlatform(platform)

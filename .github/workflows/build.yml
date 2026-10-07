@@ -26,7 +26,7 @@ env:
 jobs:
   build:
     name: 'Platform: ${{ matrix.platform }}'
-    runs-on: windows-2025
+    runs-on: windows-2025-vs2026
     permissions:
       contents: read
     strategy:
