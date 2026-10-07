@@ -126,6 +126,17 @@ jobs:
           wix extension add -g WixToolset.UI.wixext/5.0.2
           wix --version
 
+      - name: 'Locate Visual Studio MSBuild (NUKE 9 resolver cannot see VS2026 folders)'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) { throw "vswhere.exe not found at '$vswhere'." }
+          $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\amd64\MSBuild.exe' | Select-Object -First 1
+          if (-not $msbuild) { throw 'MSBuild.exe not found via vswhere.' }
+          Write-Output "MSBUILD_EXE=$msbuild" >> $env:GITHUB_ENV
+          Write-Output "Resolved MSBuild: $msbuild"
+
       - name: 'Build (NUKE Ci: compile + tests + MSI + CAB)'
         shell: pwsh
         env:
