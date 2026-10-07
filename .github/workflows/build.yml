@@ -26,7 +26,10 @@ env:
 jobs:
   build:
     name: 'Platform: ${{ matrix.platform }}'
-    runs-on: windows-2025-vs2026
+    # VS2022 image: user-mode projects pin PlatformToolset v143 and demand MFC+Spectre libs for it
+    # (MSB8042). The windows-2025[-vs2026] images ship MFC-Spectre only for their default toolset,
+    # so build where v143 + MFC-Spectre is preinstalled (same as upstream AppVeyor).
+    runs-on: windows-2022
     permissions:
       contents: read
     strategy:
