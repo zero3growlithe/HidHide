@@ -1,0 +1,153 @@
+name: 'Build'
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '**/*.md'
+      - 'README/**'
+      - 'assets/**'
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
+  DOTNET_NOLOGO: 'true'
+  # Version layout required by HidHide.vcxproj: major.minor.revision.build
+  BUILD_VERSION: '1.7.100.0'
+
+jobs:
+  build:
+    name: 'Platform: ${{ matrix.platform }}'
+    runs-on: windows-2025
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [x64, ARM64]
+    steps:
+      - name: 'Checkout'
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 'Setup .NET (SDK for NUKE build system)'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: 'Cache Windows kit installer layouts'
+        id: kits-layout
+        uses: actions/cache@v4
+        with:
+          path: |
+            sdk-layout
+            wdk-layout
+          key: windows-kits-28000-v1
+
+      - name: 'Download SDK and WDK installer layouts'
+        if: steps.kits-layout.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          function Invoke-KitLayout([string]$Uri, [string]$Name, [string]$Layout) {
+            $bootstrapper = Join-Path $env:RUNNER_TEMP $Name
+            Write-Output "Downloading $Name ..."
+            Invoke-WebRequest -Uri $Uri -OutFile $bootstrapper -UseBasicParsing
+            New-Item -ItemType Directory -Force -Path $Layout | Out-Null
+            $proc = Start-Process -FilePath $bootstrapper -ArgumentList '/layout', $Layout, '/quiet', '/ceip', 'off' -Wait -PassThru
+            if ($proc.ExitCode -notin 0, 3010) {
+              throw "$Name /layout failed with exit $($proc.ExitCode)"
+            }
+          }
+          Invoke-KitLayout 'https://go.microsoft.com/fwlink/?linkid=2366211' 'winsdksetup.exe' (Join-Path $env:GITHUB_WORKSPACE 'sdk-layout')
+          Invoke-KitLayout 'https://go.microsoft.com/fwlink/?LinkId=2371554' 'wdksetup.exe' (Join-Path $env:GITHUB_WORKSPACE 'wdk-layout')
+
+      - name: 'Install Windows SDK and WDK'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $inc = 'C:\Program Files (x86)\Windows Kits\10\Include'
+          function Test-WdkHeaders {
+            Get-ChildItem $inc -Directory -ErrorAction SilentlyContinue |
+              Where-Object { (Test-Path (Join-Path $_.FullName 'km\ntifs.h')) } |
+              Select-Object -First 1
+          }
+          $present = Test-WdkHeaders
+          if ($present) {
+            Write-Output "WDK already present ($($present.Name))."
+            return
+          }
+
+          $sdkSetup = Join-Path $env:GITHUB_WORKSPACE 'sdk-layout\winsdksetup.exe'
+          $wdkSetup = Join-Path $env:GITHUB_WORKSPACE 'wdk-layout\wdksetup.exe'
+          if (-not (Test-Path -LiteralPath $sdkSetup)) { throw "SDK layout missing: $sdkSetup" }
+          if (-not (Test-Path -LiteralPath $wdkSetup)) { throw "WDK layout missing: $wdkSetup" }
+
+          Write-Output 'Installing Windows SDK ...'
+          $sdkArgs = @(
+            '/features',
+            'OptionId.DesktopCPPx86', 'OptionId.DesktopCPPx64', 'OptionId.DesktopCPParm64',
+            'OptionId.UWPCPP',
+            '/quiet', '/norestart', '/ceip', 'off'
+          )
+          $proc = Start-Process -FilePath $sdkSetup -ArgumentList $sdkArgs -Wait -PassThru
+          Write-Output "SDK installer exit $($proc.ExitCode)"
+          if ($proc.ExitCode -notin 0, 3010) { throw "SDK install failed with exit $($proc.ExitCode)" }
+
+          Write-Output 'Installing WDK ...'
+          $proc = Start-Process -FilePath $wdkSetup -ArgumentList @('/features', '+', '/quiet', '/norestart', '/ceip', 'off') -Wait -PassThru
+          Write-Output "WDK installer exit $($proc.ExitCode)"
+          if ($proc.ExitCode -notin 0, 3010) { throw "WDK install failed with exit $($proc.ExitCode)" }
+
+          $present = Test-WdkHeaders
+          if (-not $present) {
+            throw 'Kit installers finished but km headers were not found.'
+          }
+          Write-Output "WDK installed ($($present.Name))."
+
+      - name: 'Install WiX 5.0.2 CLI + UI extension (MSI build)'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          dotnet tool install --global wix --version 5.0.2
+          $dotnetTools = Join-Path $env:USERPROFILE '.dotnet/tools'
+          Write-Output "$dotnetTools" >> $env:GITHUB_PATH
+          wix extension add -g WixToolset.UI.wixext/5.0.2
+          wix --version
+
+      - name: 'Build (NUKE Ci: compile + tests + MSI + CAB)'
+        shell: pwsh
+        env:
+          APPVEYOR_BUILD_VERSION: ${{ env.BUILD_VERSION }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          powershell -ExecutionPolicy Bypass -File ".\build.ps1" Ci --configuration Release --platform ${{ matrix.platform }}
+
+      - name: 'Collect unit test log tail on failure'
+        if: failure()
+        shell: pwsh
+        run: |
+          # keep noisy failures diagnosable: NUKE aborts on first failing test exe line
+          Write-Output 'See build log above; test runner output is streamed by the NUKE UnitTest target.'
+
+      - name: 'Upload artifacts'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hidhide-${{ matrix.platform }}
+          if-no-files-found: error
+          path: |
+            artifacts/msi/**/*.msi
+            disk1/*.cab
+            bin/**/*.pdb
+            bin/**/HidHide*.exe
